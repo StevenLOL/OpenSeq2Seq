@@ -29,26 +29,26 @@ def normalize(inputs, training, norm_type):
 
 
 
-def dropout_normalize_add_NTC(x,
-                              residual_x=None,
-                              norm_type='layer_norm',
-                              drop_prob=0.0,
-                              training=True,
-                               ):
-  """Performs dropout on output,
-  :param x: output of the block. A tensor of shape [batch, Time, dim]
-  :param residual_x: (default: None) input to the block.
-  If None, will be ignored
-  :param drop_prob: dropout drop probability
-  :return: A tensor of shape [batch, Time, dim]
-  """
-  x = tf.nn.dropout(x=x, keep_prob=1.0 - drop_prob,
-                      noise_shape=[tf.shape(x)[0], 1, tf.shape(x)[2]])
-  # residual connection
-  if residual_x is not None:
-    x += residual_x
-
-  return normalize(x, training, norm_type)
+  # def dropout_normalize_add_NTC(x,
+  #                             residual_x=None,
+  #                             norm_type='layer_norm',
+  #                             drop_prob=0.0,
+  #                             training=True,
+  #                              ):
+  # """Performs dropout on output,
+  # :param x: output of the block. A tensor of shape [batch, Time, dim]
+  # :param residual_x: (default: None) input to the block.
+  # If None, will be ignored
+  # :param drop_prob: dropout drop probability
+  # :return: A tensor of shape [batch, Time, dim]
+  # """
+  # x = tf.nn.dropout(x=x, keep_prob=1.0 - drop_prob,
+  #                     noise_shape=[tf.shape(x)[0], 1, tf.shape(x)[2]])
+  # # residual connection
+  # if residual_x is not None:
+  #   x += residual_x
+  #
+  # return normalize(x, training, norm_type)
 
 
 def get_pad_masking_bias(x, y, PAD_ID, heads, dtype=tf.float32):
@@ -67,46 +67,42 @@ def get_pad_masking_bias(x, y, PAD_ID, heads, dtype=tf.float32):
   return tf.cast(attention_bias, dtype=dtype)
 
 
-def ffn_and_layer_norm(inputs,
-                       inner_dim,
-                       resulting_dim,
-                       norm_type,
-                       drop_prob=0.0,
-                       training=True,
-                       inner_activation=tf.nn.relu):
+def ffn(inputs,
+        inner_dim,
+        resulting_dim,
+        inner_activation=tf.nn.relu,
+        drop_prob=0.0):
   """Position-wise fully connected feed-forward network with layer norm
   and residual connection
+  :param drop_prob:
   :param inpt: input tensor
   :param inner_dim: bottleneck dimension
   :param resulting_dim: output dimensionality
-  :param drop_prob: dropout probability of drop
   :param inner_activation: inner activation function
   :return:
   """
-  with tf.variable_scope("FFN_and_layer_norm"):
+  with tf.variable_scope("FFN"):
     inner_act = tf.layers.dense(inputs=inputs,
                                 units=inner_dim,
                                 activation=inner_activation,
                                 name="first_dense")
-    ffn_out = tf.layers.dense(inputs=inner_act,
+    inner_act = tf.nn.dropout(x=inner_act, keep_prob=1.0 - drop_prob)
+    res = tf.layers.dense(inputs=inner_act,
                               units=resulting_dim,
                               activation=None,
                               name="second_dense")
-
-    res = dropout_normalize_add_NTC(x=ffn_out, residual_x=inputs,
-                                    drop_prob=drop_prob,
-                                    training=training,
-                                    norm_type=norm_type)
     return res
 
 
-def embed_and_maybe_add_position_signal(inpt,
+def embed_and_maybe_add_position_signal(inputs,
                                         emb_W,
-                                        num_timescales,                                        
-                                        heads):
+                                        num_timescales,
+                                        heads,
+                                        scale=1.0,#32.0,
+                                        drop_prob=0.0):
   """
   Performs embedding and adds sinusoid signals
-  :param inpt: a tensor of shape [batch, T]
+  :param inputs: a tensor of shape [batch, T]
   :param emb_W: embedding matrix
   :param num_timescales: set this to d_model/2
   :param heads: number of heads
@@ -114,11 +110,17 @@ def embed_and_maybe_add_position_signal(inpt,
   """
   with tf.name_scope("embed_and_maybe_add_position_signal"):
     with tf.name_scope("embed"):
-      embedded_inputs = tf.nn.embedding_lookup(emb_W,
-                                             inpt)
+      if scale != 1.0:
+        embedded_inputs = scale * tf.nn.embedding_lookup(emb_W,
+                                                         inputs)
+      else:
+        embedded_inputs = tf.nn.embedding_lookup(emb_W,
+                                                 inputs)
+
+    embedded_inputs = tf.nn.dropout(x=embedded_inputs, keep_prob=1.0 - drop_prob)
 
     with tf.name_scope("pad_masking"):
-      bias = get_pad_masking_bias(inpt, inpt, PAD_ID=SpecialTextTokens.PAD_ID.value,
+      bias = get_pad_masking_bias(inputs, inputs, PAD_ID=SpecialTextTokens.PAD_ID.value,
                                   heads=heads, dtype=emb_W.dtype)
 
     with tf.name_scope("timing_signal"):

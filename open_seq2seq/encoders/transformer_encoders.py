@@ -7,12 +7,12 @@ from __future__ import unicode_literals
 from six.moves import range
 
 import tensorflow as tf
-
+import math
 from .encoder import Encoder
 from open_seq2seq.parts.attention import multi_head_attention_fn
-from open_seq2seq.parts.common import ffn_and_layer_norm, \
+from open_seq2seq.parts.common import ffn, \
                                       embed_and_maybe_add_position_signal, \
-                                      dropout_normalize_add_NTC
+                                      normalize
 
 
 class TransformerEncoder(Encoder):
@@ -71,38 +71,36 @@ class TransformerEncoder(Encoder):
     else:
       training = False
       drop_prob = 0.0
+    keep_prob = 1.0 - drop_prob
 
-    embedded_inputs_with_pos, bias = embed_and_maybe_add_position_signal(
-      inpt=input_dict['src_sequence'],
+    x, bias = embed_and_maybe_add_position_signal(
+      inputs=input_dict['src_sequence'],
       emb_W=enc_emb_w,
       num_timescales=int(d_model/2),
-      heads=attention_heads)
-
-    x = dropout_normalize_add_NTC(x=embedded_inputs_with_pos,
-                                  drop_prob=drop_prob,
-                                  training=training,
-                                  norm_type=self._norm_type)
+      heads=attention_heads,
+      drop_prob=drop_prob,
+      scale=1.0)#math.sqrt(d_model))
 
     for block_ind in range(self.params['encoder_layers']):
       with tf.variable_scope("EncoderBlock_{}".format(block_ind)):
         # self-attention
         with tf.variable_scope("SelfAttention"):
-          att_out = multi_head_attention_fn(Q=x, K=x, V=x, d_model=d_model,
-                                            h=attention_heads,
-                                            additional_bias=bias)
+          x_norm = normalize(x, training=training,
+                             norm_type=self._norm_type) # preprocess
+          y = multi_head_attention_fn(Q=x_norm, K=x_norm, V=x_norm,
+                                      d_model=d_model,
+                                      h=attention_heads,
+                                      additional_bias=bias)
+          x = tf.nn.dropout(x=y, keep_prob=keep_prob) + x # postprocess
+        with tf.variable_scope("FFN_And_Drop"):
+          x_norm = normalize(x, training=training,
+                             norm_type=self._norm_type)  # preprocess
+          y = ffn(inputs=x_norm, inner_dim=ffn_inner_dim,
+                  resulting_dim=d_model, drop_prob=drop_prob)
+          x = tf.nn.dropout(x=y, keep_prob=keep_prob) + x
 
-          ff_input = dropout_normalize_add_NTC(x=att_out, residual_x=x,
-                                               drop_prob=drop_prob,
-                                               training=training,
-                                               norm_type=self._norm_type)
-
-        x = ffn_and_layer_norm(inputs=ff_input,
-                               inner_dim=ffn_inner_dim,
-                               resulting_dim=d_model,
-                               drop_prob=drop_prob,
-                               training=training,
-                               norm_type=self._norm_type)
-    return {'outputs': x,
+    outputs = normalize(x, training=training, norm_type=self._norm_type)
+    return {'outputs': outputs,
             'state': None,
             'src_lengths': input_dict['src_length'],
             'enc_emb_w': enc_emb_w,

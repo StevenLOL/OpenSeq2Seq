@@ -25,7 +25,7 @@ base_params = {
   "print_samples_steps": 50,
   "eval_steps": 50,
   "save_checkpoint_steps": 300,
-  "logdir": "ReversalTask-TransformerFP32",
+  "logdir": "ReversalTask-TransformerFP32-2TRE",
 
   "optimizer": "Adam",
   "optimizer_params": {
@@ -33,7 +33,7 @@ base_params = {
     "beta2": 0.98,
     "epsilon": 0.001,
   },
-  "learning_rate": 1.0,
+  "learning_rate": 1.01,
   "lr_policy": transformer_policy,
   "lr_policy_params": {
     "warmup_steps": 600,
@@ -70,6 +70,7 @@ base_params = {
   "loss_params": {
     "offset_target_by_one": True,
     "do_mask": True,
+    "average_across_timestep": True,
     #"label_smoothing": 0.01,
   }
 }
